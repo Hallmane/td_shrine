@@ -1,0 +1,198 @@
+h1 {
+   color: #0000FF;
+}
+
+h4 {
+   color: #FFFF00;
+}
+
+body, h2, h3, h4, p, ul, li {
+   margin: 0;
+   padding: 0;
+   text-align: center;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&display=swap');
+
+body {
+   font-family: 'IBM Plex Mono', monospace;
+   display: flex;
+   justify-content: center;
+   align-items: center;
+   background-color: #ececec;
+   color: #0000ff;
+   background-image: url('assets/terry_dance.gif');
+   background-repeat: repeat; 
+   padding:0;
+   margin:0;
+   height: 100vh; /* Ensure body takes full viewport height */
+}
+
+.outer-container {
+   display: grid;
+   grid-template-columns: 1fr 1fr 1fr;
+   width: 90%;
+   max-width: 1280px;
+   min-width: 960px;
+   background-color: #00FFFF;
+   border: 8px solid #0000FF;
+   align-self: center; /* Center the container vertically */
+   justify-self: center; /* Center the container horizontally */
+}
+
+.left-column {
+   display: flex;
+   flex-direction: column;
+   border-right: 8px solid #0000FF;
+   position: relative;
+   overflow-y: auto;
+}
+
+.middle-column {
+   display: flex;
+   flex-direction: column;
+   border-right: 8px solid #0000FF;
+   position: relative;
+}
+
+.right-column {
+   display: flex;
+   flex-direction: column;
+   justify-content: space-between;
+   height: 100%;
+}
+
+.top-section {
+   width: 100%;
+   max-height: 50%;
+   overflow-y: auto;
+}
+
+.bottom-section {
+   width: 100%;
+   max-height: 50%;
+   overflow-y: auto;
+}
+
+.card, .container {
+   background-color: #818181;
+   color: #0000FF;
+   width: 100%;
+   box-sizing: border-box;
+   border: 2px solid #FFFFFF;
+   overflow-y: auto;
+   image-rendering: pixelated;
+}
+
+.contact-card {
+   background-color: #818181;
+   color: #0000FF;
+   width: 100%;
+   box-sizing: border-box;
+   border: 2px solid #FFFFFF;
+   overflow-y: auto;
+   image-rendering: pixelated;
+}
+
+.terry-image {
+   width: 90%;
+   image-rendering: pixelated;
+   margin: 1em;
+}
+
+.terry-background {
+   width: 100%;
+   background-color: #FFFF00;
+}
+
+.button {
+   display: inline-block;
+   border: 2px solid #000000;
+   background-color: #0000FF;
+   color: #FFFFFF;
+   cursor: pointer;
+   padding: 5px;
+   text-align: center;
+   margin: 5px;
+}
+
+.button:hover {
+   background-color: #0000AA;
+}
+
+.audio-button {
+   position: absolute;
+   top: 10px;
+   right: 10px;
+}
+
+audio {
+   display: none;
+}
+
+.leaderboard-entry {
+   display: flex;
+   justify-content: space-between;
+   border-bottom: 1px solid #0000FF;
+   color: #0000FF;
+   font-family: 'IBM Plex Mono', monospace;
+   text-decoration: none;
+   width: 100%;
+}
+
+.chat-container {
+   display: flex;
+   flex-direction: column;
+   justify-content: space-between;
+   height: 100%;
+   width: 100%;
+}
+
+.chat-history {
+   flex-grow: 1;
+   overflow-y: auto;
+   padding: 10px;
+   background-color: #818181;
+   border: 2px solid #FFFFFF;
+   image-rendering: pixelated;
+}
+
+.chat-message {
+   margin-bottom: 5px;
+   word-wrap: break-word;
+   color: #0000FF;
+}
+
+.chat-input {
+   display: flex;
+   padding: 10px;
+   background-color: #818181;
+   border: 2px solid #FFFFFF;
+}
+
+.chat-input input {
+   flex-grow: 1;
+   padding: 5px;
+   margin-right: 5px;
+   border: 2px solid #0000FF;
+   color: #0000FF;
+   background-color: #FFFFFF;
+   image-rendering: pixelated;
+}
+
+.chat-input button {
+   padding: 5px 10px;
+   border: 2px solid #0000FF;
+   background-color: #0000FF;
+   color: #FFFFFF;
+   cursor: pointer;
+   image-rendering: pixelated;
+}
+
+.chat-input button:hover {
+   background-color: #0000AA;
+}
+
+* {
+   image-rendering: pixelated;
+}
