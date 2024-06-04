@@ -17,6 +17,13 @@ pub enum ChatRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WsUpdate {
+    NewChatMessage(ChatMessage),
+    ChatHistory(Vec<ChatMessage>), //??:w
+
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessageBody {
     pub content: String,
 }
@@ -47,6 +54,7 @@ pub struct State {
     pub pending_contact_requests: Vec<NodeId>,  
     pub incoming_contact_requests: Vec<NodeId>,
     pub chat_history: Vec<ChatMessage>,
+    pub ws_channels: HashSet<u32>,
 }
 
 //
@@ -62,6 +70,7 @@ impl State {
             pending_contact_requests: Vec::new(),
             incoming_contact_requests: Vec::new(),
             chat_history: Vec::new(), 
+            ws_channels: HashSet::new(),
         }
     }
 

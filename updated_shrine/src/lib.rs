@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use kinode_process_lib::{
-    Address, NodeId, Message, ProcessId, Request, Response, await_message, call_init, http, get_blob, clear_state, println,
-    http::{bind_http_path, bind_ws_path, send_response, send_ws_push, serve_ui},
+    Address, NodeId, Message, ProcessId, Request, Response, LazyLoadBlob,
+    await_message, call_init, http, get_blob, clear_state, println,
+    http::{WsMessageType, HttpServerRequest, send_ws_push, bind_http_path, bind_ws_path, send_response, serve_ui},
 };
 
 mod structs;
-use structs::{LeaderboardEntry, State, ContactRequest, ContactRequestBody, ChatMessage, ChatMessageBody, ChatRequest};
+use structs::{LeaderboardEntry, State, ContactRequest, ContactRequestBody, ChatMessage, ChatMessageBody, ChatRequest, WsUpdate};
 
 wit_bindgen::generate!({
     path: "wit",
@@ -35,7 +36,7 @@ fn init(our: Address) {
     // Bind WebSocket path
     bind_ws_path("/", true, false).unwrap();
 
-    kinode_process_lib::timer::set_timer(10_000, None);
+    kinode_process_lib::timer::set_timer(10_000, None); // remove this kind of functionality
 
     while let Ok(message) = await_message() {
         println!("our state: {:?}", state);
@@ -69,6 +70,57 @@ fn handle_timer_events(our: &Address, state: &mut State) {
     kinode_process_lib::timer::set_timer(30_000, None);
 }
 
+fn handle_websocket_event(
+    our: Address, 
+    state: &mut State, 
+    message: &Message
+) -> anyhow::Result<()> {
+    let Ok(server_request) = serde_json::from_slice::<HttpServerRequest>(message.body()) else {
+        return Ok(());
+    };
+
+    match server_request {
+        HttpServerRequest::WebSocketOpen { channel_id, ..} => { 
+            state.ws_channels.insert(channel_id); 
+            broadcast_chat_update(&state, WsUpdate::ChatHistory(state.chat_history.clone()));//newly connected clients get to see the chat history
+        },
+        HttpServerRequest::WebSocketPush { .. } => {
+            let Some(blob) = get_blob() else { return Ok(());};
+            let Ok(blob_string) = String::from_utf8(blob.bytes) else { return Ok(());};
+            let chat_message: ChatMessageBody = serde_json::from_str(&blob_string)?;
+            let chat_message = ChatMessage {
+                sender: state.node_id.clone(),
+                content: chat_message.content.clone(),
+                timestamp: std::time::SystemTime::now(),
+            };
+            state.add_chat_message(chat_message.clone());
+            broadcast_chat_update(state, WsUpdate::NewChatMessage(chat_message))?;
+        },
+        HttpServerRequest::WebSocketClose(channel_id) =>  { state.ws_channels.remove(&channel_id); },
+        _ => {}
+    };
+
+    Ok(())
+}
+
+fn broadcast_chat_update(state: &State, update: WsUpdate) -> anyhow::Result<()> {
+    let blob = LazyLoadBlob {
+        mime: Some("application/json".to_string()),
+        bytes: serde_json::json!({
+            "WsUpdate": update
+        })
+        .to_string()
+        .as_bytes()
+        .to_vec(),
+    };
+
+    for channel_id in &state.ws_channels {
+        send_ws_push(*channel_id, WsMessageType::Text, blob.clone());
+    }
+
+    Ok(())
+}
+
 // unneccessary
 fn handle_http_request(our: &Address, state: &mut State, message: &Message) {
     if let Message::Request { ref body, .. } = message {
@@ -83,7 +135,7 @@ fn process_http_request(
     body: &[u8],
     state: &mut State
 ) -> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
-    let server_request = http::HttpServerRequest::from_bytes(body).ok()?;
+    let server_request = HttpServerRequest::from_bytes(body).ok()?;
     let http_request = server_request.request()?;
     let bound_path = http_request.bound_path(Some(&our.process())).rsplit('/').next().unwrap_or("");
 
