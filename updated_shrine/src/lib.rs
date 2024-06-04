@@ -36,38 +36,51 @@ fn init(our: Address) {
     // Bind WebSocket path
     bind_ws_path("/", true, false).unwrap();
 
-    kinode_process_lib::timer::set_timer(10_000, None); // remove this kind of functionality
+    kinode_process_lib::timer::set_timer(10_000, None); //TODO: remove this kind of functionality
 
     while let Ok(message) = await_message() {
         println!("our state: {:?}", state);
-        handle_message(&our, &mut state, message);
+        match handle_message(&our, &mut state, message) {
+            Ok(()) => {}
+            Err(e) => {println!("message handling error: {:?}", e);}
+        }
         state.save();
     }
 }
 
 // handle local and alien messages
-fn handle_message(our: &Address, state: &mut State, message: Message) {
+fn handle_message(
+    our: &Address, 
+    state: &mut State, 
+    message: Message
+) -> anyhow::Result<()> {
     if message.source().node == our.node {
         let pid_str =  message.source().process.to_string();
         match pid_str.as_str() {  
             "timer:distro:sys" => handle_timer_events(our, state),
-            "http_server:distro:sys" => handle_http_request(our, state, &message),
-            _ => println!("other process than the shrine"),
+            "http_server:distro:sys" => handle_http_server_request(our, state, &message),
+            _ => {
+                println!("other process than the shrine");
+                return Ok(())
+            }
         }
     } else if state.discoverable || state.pending_contact_requests.contains(&message.source().node) || state.contacts.contains(&message.source().node){ 
         println!("Incoming alien message");
-        handle_alien_message(our, state, &message);
+        handle_alien_message(our, state, &message)
+    } else {
+        return Ok(()) //idc
     }
 }
 
 // the timing needs to be more sophisicated 
-fn handle_timer_events(our: &Address, state: &mut State) {
+fn handle_timer_events(our: &Address, state: &mut State) -> anyhow::Result<()>{
     //println!("timer update.");
     push_update_to_your_contacts(our, state);
     if !state.pending_contact_requests.is_empty() {
         resend_pending_requests(state);
     }
     kinode_process_lib::timer::set_timer(30_000, None);
+    return Ok(())
 }
 
 fn handle_websocket_event(
@@ -76,13 +89,13 @@ fn handle_websocket_event(
     message: &Message
 ) -> anyhow::Result<()> {
     let Ok(server_request) = serde_json::from_slice::<HttpServerRequest>(message.body()) else {
-        return Ok(());
+        return Err(anyhow::anyhow!("couldn't get the server request: {:?}", message));
     };
 
     match server_request {
         HttpServerRequest::WebSocketOpen { channel_id, ..} => { 
             state.ws_channels.insert(channel_id); 
-            broadcast_chat_update(&state, WsUpdate::ChatHistory(state.chat_history.clone()));//newly connected clients get to see the chat history
+            broadcast_chat_update(&state, WsUpdate::ChatHistory(state.chat_history.clone())).unwrap();//newly connected clients get to see the chat history
         },
         HttpServerRequest::WebSocketPush { .. } => {
             let Some(blob) = get_blob() else { return Ok(());};
@@ -94,7 +107,7 @@ fn handle_websocket_event(
                 timestamp: std::time::SystemTime::now(),
             };
             state.add_chat_message(chat_message.clone());
-            broadcast_chat_update(state, WsUpdate::NewChatMessage(chat_message))?;
+            broadcast_chat_update(state, WsUpdate::NewChatMessage(chat_message)).unwrap();
         },
         HttpServerRequest::WebSocketClose(channel_id) =>  { state.ws_channels.remove(&channel_id); },
         _ => {}
@@ -121,66 +134,85 @@ fn broadcast_chat_update(state: &State, update: WsUpdate) -> anyhow::Result<()> 
     Ok(())
 }
 
-// unneccessary
-fn handle_http_request(our: &Address, state: &mut State, message: &Message) {
+fn handle_http_server_request(
+    our: &Address, 
+    state: &mut State, 
+    message: &Message
+) -> anyhow::Result<()> {
     if let Message::Request { ref body, .. } = message {
-        if let Some(response) = process_http_request(our, body, state) {
-            send_http_response(response);
+        let Ok(server_request) = serde_json::from_slice::<HttpServerRequest>(body) else {
+            return Ok(());
+        };
+        match server_request {
+            HttpServerRequest::WebSocketOpen { channel_id, ..} => { 
+                state.ws_channels.insert(channel_id); 
+                broadcast_chat_update(&state, WsUpdate::ChatHistory(state.chat_history.clone())).unwrap();//newly connected clients get to see the chat history
+            }
+            HttpServerRequest::WebSocketPush { .. } => {
+                let Some(blob) = get_blob() else { return Ok(());};
+                let Ok(blob_string) = String::from_utf8(blob.bytes) else { return Ok(());};
+                let chat_message: ChatMessageBody = serde_json::from_str(&blob_string)?;
+                let chat_message = ChatMessage {
+                    sender: state.node_id.clone(),
+                    content: chat_message.content.clone(),
+                    timestamp: std::time::SystemTime::now(),
+                };
+                state.add_chat_message(chat_message.clone());
+                broadcast_chat_update(state, WsUpdate::NewChatMessage(chat_message)).unwrap();
+            },
+            HttpServerRequest::WebSocketClose(channel_id) =>  { state.ws_channels.remove(&channel_id); },
+            HttpServerRequest::Http(request) => {
+                let bound_path = request.bound_path(Some(&our.process())).rsplit('/').next().unwrap_or("");
+                match request.method()? {
+                    http::Method::GET => handle_get_request(bound_path, state),
+                    http::Method::POST => handle_post_request(bound_path, state, &request),
+                    _ => return Err(anyhow::anyhow!("blabla"))
+                };
+            },
+            _ => {return Err(anyhow::anyhow!("not sure what this request is: {:?}", server_request));}
         }
+        Ok(())
+    } else {
+        return Err(anyhow::anyhow!("message is not a request: {:?}", message));
     }
 }
 
-fn process_http_request(
-    our: &Address,
-    body: &[u8],
-    state: &mut State
-) -> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
-    let server_request = HttpServerRequest::from_bytes(body).ok()?;
-    let http_request = server_request.request()?;
-    let bound_path = http_request.bound_path(Some(&our.process())).rsplit('/').next().unwrap_or("");
-
-    match http_request.method().ok()? {
-        http::Method::GET => handle_get_request(bound_path, state),
-        http::Method::POST => handle_post_request(bound_path, state, &http_request),
-        _ => None,
-    }
-}
-
-fn handle_get_request(bound_path: &str, state: &State) -> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
+// How did this even work before?
+fn handle_get_request(bound_path: &str, state: &State) -> anyhow::Result<()> {
     match bound_path {
         "get_leaderboard" => {
             let mut headers = HashMap::new();
             headers.insert("Content-Type".to_string(), "application/json".to_string());
-            let body = serde_json::to_vec(state).ok()?;
-            Some((http::StatusCode::OK, headers, body))
+            let body = serde_json::to_vec(state)?;
+            Ok(())
         },
-        _ => None,
+        _ => Ok(())
     }
 }
 
 // I should get my return types in order
 fn handle_post_request(bound_path: &str, state: &mut State, http_request: &http::IncomingHttpRequest) 
--> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
+-> anyhow::Result<()> {
     match bound_path {
         "add_respect" => {
             state.add_respect();
-            Some((http::StatusCode::OK, HashMap::new(), Vec::new()))
+            Ok(())
         },
-        "send_contact_request" => handle_send_contact_request(state, http_request),
+        "send_contact_request" => handle_send_contact_request(state, http_request), 
         "set_discoverable" => {
             state.set_discoverable(!state.discoverable);
-            Some((http::StatusCode::OK, HashMap::new(), Vec::new()))
+            Ok(())
         },
         "accept_contact" => handle_accept_contact(state, http_request),
         "decline_contact" => handle_decline_contact(state, http_request),
         "send_chat_message" => handle_send_chat_message(state, http_request),
-        _ => None,
+        _ => return Err(anyhow::anyhow!("bound path not valid: {:?}", bound_path))
     }
 }
 
-fn handle_send_contact_request(state: &mut State, http_request: &http::IncomingHttpRequest) 
--> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
-    let body = get_blob()?;
+//TODO: These contact request can be simplified to one function using stronger typing
+fn handle_send_contact_request(state: &mut State, http_request: &http::IncomingHttpRequest) -> anyhow::Result<()> {
+    let body = get_blob().ok_or(anyhow::anyhow!("couln't get body from blob"))?;
     let body_str = std::str::from_utf8(&body.bytes).unwrap_or_default();
     let mut headers = HashMap::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -189,25 +221,23 @@ fn handle_send_contact_request(state: &mut State, http_request: &http::IncomingH
         Ok(parsed_body) => {
             let their_addy = Address {
                 node: parsed_body.node.clone(),
-                process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").ok()?,
+                process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os")?
             };
             Request::new()
-                .body(serde_json::to_vec(&ContactRequest::RequestContact(parsed_body.node.clone())).ok()?)
+                .body(serde_json::to_vec(&ContactRequest::RequestContact(parsed_body.node.clone()))?)
                 .target(&their_addy)
-                .send().ok()?;
+                .send()?;
             state.append_outgoing_contact_request(parsed_body.node);
-            Some((http::StatusCode::OK, headers, Vec::new()))
+            Ok(())
         },
-        Err(e) => {
-            println!("Failed to parse the contact request body: {:?}", e);
-            Some((http::StatusCode::BAD_REQUEST, headers, Vec::new()))
+        _ => {
+            return Err(anyhow::anyhow!("failed to pares the body {:?}", body_str));
         }
     }
 }
 
-fn handle_accept_contact(state: &mut State, http_request: &http::IncomingHttpRequest) 
--> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
-    let body = get_blob()?;
+fn handle_accept_contact(state: &mut State, http_request: &http::IncomingHttpRequest) -> anyhow::Result<()> {
+    let Some(body) = get_blob() else {return Ok(())};
     let body_str = std::str::from_utf8(&body.bytes).unwrap_or_default();
     let mut headers = HashMap::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -219,25 +249,25 @@ fn handle_accept_contact(state: &mut State, http_request: &http::IncomingHttpReq
             state.incoming_contact_requests.retain(|incoming| *incoming != their_node);
             let their_addy = Address {
                 node: their_node.clone(),
-                process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").ok()?,
+                process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os")?,
             };
             Request::new()
-                .body(serde_json::to_vec(&ContactRequest::ContactAccepted(their_node.clone())).ok()?)
+                .body(serde_json::to_vec(&ContactRequest::ContactAccepted(their_node.clone()))?)
                 .target(&their_addy)
-                .send().ok()?;
+                .send()
+                .unwrap();
             println!("sent contact accepted to {:?}", &their_node.to_string());
-            Some((http::StatusCode::OK, headers, Vec::new()))
+            Ok(())
         },
-        Err(e) => {
-            println!("failed to parse the local contact request {e:?}");
-            Some((http::StatusCode::BAD_REQUEST, headers, Vec::new()))
+        _ => {
+            return Err(anyhow::anyhow!("Failed to parse body: {:?}", body_str));
         }
     }
 }
 
 fn handle_decline_contact(state: &mut State, http_request: &http::IncomingHttpRequest) 
--> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
-    let body = get_blob()?;
+-> anyhow::Result<()> {
+    let body = get_blob().ok_or(anyhow::anyhow!("couldn't get body from blob"))?;;
     let body_str = std::str::from_utf8(&body.bytes).unwrap_or_default();
     let mut headers = HashMap::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -246,20 +276,16 @@ fn handle_decline_contact(state: &mut State, http_request: &http::IncomingHttpRe
         Ok(parsed_body) => {
             let their_node = parsed_body.node.clone();
             state.decline_contact(their_node.clone());
-            Some((http::StatusCode::OK, headers, Vec::new()))
+            Ok(())
         },
-        Err(e) => {
-            println!("failed to parse the local contact request {e:?}");
-            Some((http::StatusCode::BAD_REQUEST, headers, Vec::new()))
+        _ => {
+            return Err(anyhow::anyhow!("failed to parse body {:?}", body_str));
         }
     }
 }
 
-fn handle_send_chat_message(
-    state: &mut State, 
-    http_request: &http::IncomingHttpRequest
-) -> Option<(http::StatusCode, HashMap<String, String>, Vec<u8>)> {
-    let body = get_blob()?;
+fn handle_send_chat_message(state: &mut State, http_request: &http::IncomingHttpRequest)-> anyhow::Result<()> {
+    let body = get_blob().ok_or(anyhow::anyhow!("couldn't get body from blob"))?;
     let body_str = std::str::from_utf8(&body.bytes).unwrap_or_default();
     //println!("body_str: {:?}", body_str);
     let mut headers = HashMap::new();
@@ -275,27 +301,27 @@ fn handle_send_chat_message(
             state.add_chat_message(chat_message.clone());
 
             let chat_message = ChatRequest::ChatMessageReceived(chat_message.clone());
-            // us.send(message) -> their handler, which should somehow be picked up by the websocket match statement.
+
             match serde_json::to_vec(&chat_message) {
                 Ok(serialized_message) => {
                     for contact in &state.contacts {
                         let their_addy = Address {
                             node: contact.clone(),
-                            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").ok().unwrap(),
+                            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").unwrap(),
                         };
                         Request::new()
                             .body(serialized_message.clone())
                             .target(&their_addy)
-                            .send().ok().unwrap();
+                            .send()
+                            .unwrap();
                     }
                 }
                 Err(_e) => println!("Failed to serialize chat message: {:?}", chat_message)
             }
-            Some((http::StatusCode::OK, headers, Vec::new()))
+            Ok(())
         },
-        Err(e) => {
-            println!("(LOCAL) failed to parse chat message from front-end. Error: {:?}", e);
-            Some((http::StatusCode::BAD_REQUEST, headers, Vec::new()))
+        _ => {
+            return Err(anyhow::anyhow!("failed to parse the body {:?}", body_str));
         }
     }
 }
@@ -306,7 +332,12 @@ fn send_http_response(response: (http::StatusCode, HashMap<String, String>, Vec<
     println!("Response sent: {:?}", status);
 }
 
-fn handle_alien_message(our: &Address, state: &mut State, message: &Message) {
+// strictly p2p
+fn handle_alien_message(
+    our: &Address, 
+    state: &mut State, 
+    message: &Message
+) -> anyhow::Result<()> {
     if let Ok(alien_request) = serde_json::from_slice::<ContactRequest>(message.body()) {
         println!("alien request in handling");
         let their_node = &message.source().node;
@@ -316,33 +347,31 @@ fn handle_alien_message(our: &Address, state: &mut State, message: &Message) {
                 if !state.contacts.contains(&their_node) && !state.incoming_contact_requests.contains(&their_node) && their_node != &our.node{ // temp solution for now
                     state.incoming_contact_requests.push(their_node.clone());
                     println!("contact request from {:?}", &their_node);
+                    return Ok(())
+                } else {
+                    return Err(anyhow::anyhow!("bla"))
                 }
             },
             ContactRequest::ContactAccepted(_) => { 
                 // pressing accept in the UI triggers that the sender receives this ACK from the originial receiver
                 state.contacts.push(their_node.to_string());
                 println!("{} accepted your request. You are now frens <3", &their_node);
+                Ok(())
             },
             ContactRequest::ContactUpdate(entry) => { 
                 //if they're in our contacts, update their score
                 if state.contacts.contains(&their_node) {
                     state.stats.insert(their_node.to_string(),entry);
                     println!("updated {:?}", &their_node);
+                    return Ok(())
                 } else  {
-                    println!("request from non-contact (delete this later)");
+                    return Ok(()) //request from non-contact, ~ignore
                 }
             },
-            _ => println!("contact request didn't match anything"),
+            _ => Err(anyhow::anyhow!("ain't not contact request: {:?}", alien_request))
         }
-    } else if let Ok(inc_chat_message) = serde_json::from_slice::<ChatRequest>(message.body()) {
-        println!("chat message request in handling");
-        match inc_chat_message {
-            ChatRequest::ChatMessageReceived(chat_message) => {
-                println!("alien chat message = {:?}", chat_message);
-                state.add_chat_message(chat_message); 
-            }
-            _ => println!("something else than a chat message")
-        }
+    } else {
+        return Err(anyhow::anyhow!("alien request was not ok: {:?}", message.body()))
     }
 }
 
@@ -354,10 +383,10 @@ fn push_update_to_your_contacts(our: &Address, state: &State) {
     for contact in &state.contacts {
         let their_addy = Address {
             node: contact.clone(),
-            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").ok().unwrap(),
+            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").unwrap(),
         };
         Request::new()
-            .body(serde_json::to_vec(&our_respect_update).ok().unwrap())
+            .body(serde_json::to_vec(&our_respect_update).unwrap())
             .target(&their_addy)
             .send().ok().unwrap();
     }

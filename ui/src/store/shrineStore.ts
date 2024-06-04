@@ -2,21 +2,24 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { Chat, ChatMessage, LeaderboardState } from '../types/TerryLeaderboard';
 import { getLeaderboard, getChat, addRespect, setDiscoverable, sendContactRequest, removeLeaderboardEntry, acceptContactRequest, declineContactRequest, sendChatMessage } from '../api';
+import KinodeClientApi from "@kinode/client-api";
 
 interface ShrineStore {
     leaderboard: LeaderboardState;
-    chat: Chat;
     initializeStore: () => Promise<void>;
     updateLeaderboard: () => Promise<void>;
-    updateChat: () => Promise<void>;
-    clearChatHistory: () => Promise<void>;
     addRespect: (nodeId: string) => Promise<void>;
+    sendContactRequest: (nodeId: string) => Promise<void>;
     acceptContactRequest: (nodeId: string) => Promise<void>;
     removeLeaderboardEntry: (nodeId: string) => Promise<void>;
     setDiscoverable: (discoverable: boolean) => Promise<void>;
-    sendContactRequest: (nodeId: string) => Promise<void>;
+    chat: Chat;
+    updateChat: () => Promise<void>;
+    clearChatHistory: () => Promise<void>;
     sendChatMessage: (content: string) => Promise<void>;
     receiveChatMessage: (message: ChatMessage) => void;
+    api: KinodeClientApi | null;
+    setApi: (api: KinodeClientApi) => void;
 }
 
 const useShrineStore = create<ShrineStore>()(
@@ -31,10 +34,6 @@ const useShrineStore = create<ShrineStore>()(
                 incoming_contact_requests: [],
                 chat_history: [],
             }, 
-            chat: {
-                chat_history: []
-            },
-
             initializeStore: async () => {
                 console.log('Initializing store...');
                 await Promise.all([get().updateLeaderboard(), get().updateChat()]);
@@ -47,25 +46,10 @@ const useShrineStore = create<ShrineStore>()(
                 if (state) set({ leaderboard: state });
             },
 
-            updateChat: async () => {
-                const chatMessages = await getChat();
-                console.log('Fetched chat state:', chatMessages);
-                if (chatMessages) set({ chat: { chat_history: chatMessages.chat_history } });
-            },
-
-            clearChatHistory: async () => {
-                set({ chat: { chat_history: [] } });
-            },
-
             addRespect: async (nodeId: string) => {
                 if (await addRespect(nodeId)) get().updateLeaderboard();
             },
 
-            setDiscoverable: async (discoverable: boolean) => {
-                if (await setDiscoverable(discoverable)) {
-                    get().updateLeaderboard();
-                }
-            },
 
             sendContactRequest: async (nodeId: string) => {
                 const success = await sendContactRequest(nodeId);
@@ -77,14 +61,30 @@ const useShrineStore = create<ShrineStore>()(
                 if (success) get().updateLeaderboard();
             },
 
-            declineContactRequest: async (nodeId: string) => {
-                const success = await declineContactRequest(nodeId);
-                if (success) get().updateLeaderboard();
-            },
-
             removeLeaderboardEntry: async (nodeId: string) => {
                 if (await removeLeaderboardEntry(nodeId)) get().updateLeaderboard();
             },
+
+            setDiscoverable: async (discoverable: boolean) => {
+                if (await setDiscoverable(discoverable)) {
+                    get().updateLeaderboard();
+                }
+            },
+
+            chat: {
+                chat_history: []
+            },
+
+            updateChat: async () => {
+                const chatMessages = await getChat();
+                console.log('Fetched chat state:', chatMessages);
+                if (chatMessages) set({ chat: { chat_history: chatMessages.chat_history } });
+            },
+
+            clearChatHistory: async () => {
+                set({ chat: { chat_history: [] } });
+            },
+
 
             sendChatMessage: async (content: string) => {
                 const success = await sendChatMessage(content);
@@ -108,7 +108,9 @@ const useShrineStore = create<ShrineStore>()(
                         chat_history: [...state.chat.chat_history, message].slice(-100)
                     }
                 }));
-            }
+            },
+            api: null,
+            setApi: (api) => set({ api }),
         }),
         {
             name: 'shrine-store',
