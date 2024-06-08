@@ -1,8 +1,66 @@
 use serde::{Serialize, Deserialize};
-use kinode_process_lib::{get_state, set_state, NodeId};
+use kinode_process_lib::{get_state, set_state, NodeId, Address};
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct State {
+    pub node_id: NodeId,
+    pub discoverable: bool,
+    pub contacts: Vec<NodeId>,
+    pub stats: HashMap<NodeId, LeaderboardEntry>,
+    pub pending_contact_requests: Vec<NodeId>,  
+    pub incoming_contact_requests: Vec<NodeId>,
+    // chat stuff
+    pub server: ServerState,
+    pub client: ClientState, //address, chat_state, ws_channels
+}
+
+pub struct ServerState {
+    chat_state: Vec<ChatMessage>, 
+    subscribers: HashSet<Address>,
+}
+
+pub struct ClientState {
+    server: Address,
+    chat_state: Vec<ChatMessage>,
+    ws_channels: HashSet<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TerryPacket {
+    ServerRequest(ServerRequest), // client -> сервер
+    ServerUpdate(ServerUpdate), // server -> client/s (updated chat)
+    ClientRequest(ClientRequest), // client -> server (SetServer and SendToServer)
+    PeerRequest(PeerMessage), // peer -> peer
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ServerRequest { 
+    ChatMessage(ChatMessage),
+    Subscribe,
+    Unsubscribe,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClientRequest {
+    SendToServer(ServerRequest),
+    SendToPeer(PeerRequest),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum PeerMessage {
+    RequestContact(NodeId),
+    ContactAccepted(NodeId),
+    ContactUpdate(LeaderboardEntry),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ServerUpdate {
+    ChatMessage(ChatMessage),
+    ChatState(Vec(ChatMessage)),
+    SubscribeAck,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -11,9 +69,20 @@ pub struct ChatMessage {
     pub timestamp: SystemTime,
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct LeaderboardEntry {
+    pub respects: u64,
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChatRequest {
     ChatMessageReceived(ChatMessage),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContactRequestBody {
+    pub node: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,36 +97,6 @@ pub struct ChatMessageBody {
     pub content: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ContactRequestBody {
-    pub node: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ContactRequest {
-    RequestContact(NodeId),
-    ContactAccepted(NodeId),
-    ContactUpdate(LeaderboardEntry),
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct LeaderboardEntry {
-    pub respects: u64,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct State {
-    pub node_id: NodeId,
-    pub discoverable: bool,
-    pub contacts: Vec<NodeId>,
-    pub stats: HashMap<NodeId, LeaderboardEntry>,
-    pub pending_contact_requests: Vec<NodeId>,  
-    pub incoming_contact_requests: Vec<NodeId>,
-    pub chat_history: Vec<ChatMessage>,
-    pub ws_channels: HashSet<u32>,
-}
-
-//
 impl State {
     /// upon init and the host hasn't added any respects to their shrine yet
     pub fn new(node_id: NodeId) -> Self {
@@ -136,8 +175,12 @@ impl State {
     }
 
     pub fn add_chat_message(&mut self, chat_message: ChatMessage) {
-        if self.chat_history.len() >= 50 {self.chat_history.remove(0);}
-        self.chat_history.push(chat_message);
+        if self.server.chat_state.len() >= 50 {
+            self.server.chat_state.remove(0);
+            self.client.chat_state.remove(0);
+        }
+        self.server.chat_history.push(chat_message);
+        self.client.chat_history.push(chat_message);
     }
 }
 
