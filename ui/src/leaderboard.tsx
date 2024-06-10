@@ -1,17 +1,17 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import useShrineStore from './store/shrineStore';
 import './styles.css'; 
 
 export const Leaderboard = () => {
 
-    const { node_id, leaderboard, updateLeaderboard} = useShrineStore(state => ({
-        node_id: state.leaderboard.node_id,
+    const { leaderboard, updateLeaderboard} = useShrineStore(state => ({
         leaderboard: state,
         discoverable: state.leaderboard.discoverable,
         updateLeaderboard: state.updateLeaderboard,
     }));
 
-    useEffect(() => {
+    // 
+    useEffect(() => { 
         updateLeaderboard();
     }, [updateLeaderboard]);
 

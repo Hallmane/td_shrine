@@ -1,4 +1,4 @@
-import { LeaderboardState, Chat } from "./types/TerryLeaderboard";
+import { LeaderboardState, Chat, ChatMessage, ClientRequest } from "./types/TerryLeaderboard";
 
 const BASE_URL = import.meta.env.BASE_URL;
 
@@ -98,12 +98,12 @@ export const declineContactRequest = async (nodeId: string): Promise<boolean> =>
     }
 }
 
-export const sendChatMessage = async (content: string): Promise<boolean> => {
+export const sendChatMessage = async (packet): Promise<boolean> => {
     try {
         const response = await fetch(`${BASE_URL}/send_chat_message`, {
             method: "POST",
             headers: { "Content-Type": "application/json"},
-            body: JSON.stringify( {content} ),
+            body: JSON.stringify(packet),
         });
 
         return response.ok;

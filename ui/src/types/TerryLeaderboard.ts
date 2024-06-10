@@ -14,7 +14,7 @@ export interface LeaderboardEntry {
     stats: Record<string, LeaderboardEntry>;
     pending_contact_requests: string[];
     incoming_contact_requests: string[];
-    chat_history: ChatMessage[];
+    //chat_history: ChatMessage[];
  }
 
 export interface ChatMessage {
@@ -25,4 +25,16 @@ export interface ChatMessage {
 
 export interface Chat {
     chat_history: ChatMessage[]
+}
+
+export interface ServerRequest {
+    type: "ServerRequest";
+    request: "ChatMessage";
+    data: ChatMessage;
+}
+
+export interface ClientRequest {
+    type: "ClientRequest";
+    request: "SendToServer";
+    data: ServerRequest;
 }

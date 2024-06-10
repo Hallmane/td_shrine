@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import KinodeClientApi from "@kinode/client-api";
 import useShrineStore from "./store/shrineStore";
+import useChatStore from "./store/chatStore";
 import { Leaderboard } from "./leaderboard";
 import ContactRequestForm from "./contactRequest";
 import IncomingRequests from "./incomingRequests";
@@ -15,30 +16,50 @@ const WEBSOCKET_URL = import.meta.env.DEV ? `${PROXY_TARGET.replace('http', 'ws'
 if (window.our) window.our.process = BASE_URL?.replace("/", "");
 
 const App: React.FC = () => {
-   const setApi = useShrineStore();
+   const setApi = useChatStore(state => state.setApi);
+   const [connected, setConnected] = useState(false);
    const node_id = useShrineStore(state => state.leaderboard.node_id); //remove this from backend as well
    const incoming_contact_requests = useShrineStore(state => state.leaderboard.incoming_contact_requests);
    const pending_contact_requests = useShrineStore(state => state.leaderboard.pending_contact_requests);
-   const [connected, setConnected] = useState(false);
    const [audioPlaying, setAudioPlaying] = useState(false);
    const audioRef = React.useRef<HTMLAudioElement>(null);
+   const wsRef = useRef(null);
+
 
    useEffect(() => {
       const kinnect = () => {
-         const newApi = new KinodeClientApi({
-            uri: WEBSOCKET_URL,
-            nodeId: window.our.node,
-            processId: window.our.process,
-            //onClose: () => {},
-            onOpen: (_event, _api) => {console.log("Connected to kinode")},
-            //onMessage: (json, _api) => {handleWsMessage(json);},
-            onError: (e) => {console.log("websocket error: ", e)},
-         });
-
-         //setApi(newApi);
-
+         if (!wsRef.current) {
+            wsRef.current = new KinodeClientApi({
+               uri: WEBSOCKET_URL,
+               nodeId: window.our.node,
+               processId: window.our.process,
+               onOpen: (_event, _api) => {
+                  setConnected(true);
+                  console.log("Connected to kinode")
+               },
+               onClose: () => {
+                  console.log("WebSocket disconnected");
+                  setConnected(false);
+                  wsRef.current = null;
+               },
+               onMessage: (json) => {
+                  useShrineStore.getState().receiveChatMessage(JSON.parse(json));
+                  //handleWsMessage(json);
+               },
+               onError: (e) => {
+                  setConnected(false);
+                  console.log("websocket error: ", e)
+               },
+            });
+         }
+         setApi(wsRef.current);
       };
-   })
+      kinnect();
+
+      return () => {
+         wsRef.current?.close();
+      };
+   }, []);
 
    useEffect(() => {
       console.log('App component mounted');

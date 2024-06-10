@@ -11,20 +11,22 @@ pub struct State {
     pub stats: HashMap<NodeId, LeaderboardEntry>,
     pub pending_contact_requests: Vec<NodeId>,  
     pub incoming_contact_requests: Vec<NodeId>,
-    // chat stuff
+    // chat stuff below
     pub server: ServerState,
-    pub client: ClientState, //address, chat_state, ws_channels
+    pub client: ClientState, 
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ServerState {
-    chat_state: Vec<ChatMessage>, 
-    subscribers: HashSet<Address>,
+    pub chat_state: Vec<ChatMessage>, 
+    pub subscribers: HashSet<Address>,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ClientState {
-    server: Address,
-    chat_state: Vec<ChatMessage>,
-    ws_channels: HashSet<u32>,
+    pub server: Option<Address>,
+    pub chat_state: Vec<ChatMessage>,
+    pub ws_channels: HashSet<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,8 +34,9 @@ pub enum TerryPacket {
     ServerRequest(ServerRequest), // client -> сервер
     ServerUpdate(ServerUpdate), // server -> client/s (updated chat)
     ClientRequest(ClientRequest), // client -> server (SetServer and SendToServer)
-    PeerRequest(PeerMessage), // peer -> peer
+    PeerRequest(PeerRequest), // peer -> peer
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerRequest { 
@@ -45,20 +48,21 @@ pub enum ServerRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientRequest {
     SendToServer(ServerRequest),
+    ToggleServer(Option<Address>),
     SendToPeer(PeerRequest),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum PeerMessage {
-    RequestContact(NodeId),
-    ContactAccepted(NodeId),
-    ContactUpdate(LeaderboardEntry),
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PeerRequest {
+    RequestPeer(NodeId),
+    PeerAccepted(NodeId),
+    PeerUpdate(LeaderboardEntry),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerUpdate {
     ChatMessage(ChatMessage),
-    ChatState(Vec(ChatMessage)),
+    ChatState(Vec<ChatMessage>),
     SubscribeAck,
 }
 
@@ -80,7 +84,7 @@ pub enum ChatRequest {
     ChatMessageReceived(ChatMessage),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactRequestBody {
     pub node: String,
 }
@@ -89,7 +93,7 @@ pub struct ContactRequestBody {
 pub enum WsUpdate {
     NewChatMessage(ChatMessage),
     ChatHistory(Vec<ChatMessage>), //??:w
-
+    SubscribeAck,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,8 +112,8 @@ impl State {
             stats, // HashMap<contact.node, their entry>, or what to use for rendering the frontend
             pending_contact_requests: Vec::new(),
             incoming_contact_requests: Vec::new(),
-            chat_history: Vec::new(), 
-            ws_channels: HashSet::new(),
+            server: ServerState::default(),
+            client: ClientState::default(),
         }
     }
 
@@ -117,7 +121,6 @@ impl State {
         match get_state() {
             Some(state_bytes) => {
                 let desbytes = bincode::deserialize(&state_bytes).expect("Correctly deserialized state");
-                //desbytes.clients = HashSet::new();
                 desbytes
             },
             None => State::new(our_node)
@@ -126,7 +129,6 @@ impl State {
 
     pub fn save(&self) {
         let state_bytes = bincode::serialize(self).expect("Failed to serialize state");
-        //println!("serialized state bytes are: {state_bytes}");
         set_state(&state_bytes);
     }
 
@@ -179,8 +181,8 @@ impl State {
             self.server.chat_state.remove(0);
             self.client.chat_state.remove(0);
         }
-        self.server.chat_history.push(chat_message);
-        self.client.chat_history.push(chat_message);
+        self.server.chat_state.push(chat_message.clone());
+        self.client.chat_state.push(chat_message.clone());
     }
 }
 
