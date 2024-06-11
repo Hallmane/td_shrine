@@ -1,4 +1,4 @@
-import { LeaderboardState, Chat, ChatMessage, ClientRequest } from "./types/TerryLeaderboard";
+import { LeaderboardState, Chat } from "./types/TerryLeaderboard";
 
 const BASE_URL = import.meta.env.BASE_URL;
 

@@ -9,7 +9,7 @@ use kinode_process_lib::{
 
 mod structs;
 use structs::{
-    TerryPacket, ServerRequest, ServerUpdate, ClientRequest, State, ClientState, ServerState,
+    TerryPacket, ClientRequest, State, ClientState, ServerState,
     LeaderboardEntry, PeerRequest, ContactRequestBody, ChatMessage, ChatMessageBody, ChatRequest, WsUpdate
 };
 
@@ -38,15 +38,11 @@ fn init(our: Address) {
     bind_http_path("/send_contact_request", true, false).unwrap();
     bind_http_path("/accept_contact", true, false).unwrap();
     bind_http_path("/decline_contact", true, false).unwrap();
-    bind_http_path("/send_chat_message", true, false).unwrap();
-
-    // Bind WebSocket path
     bind_ws_path("/", true, false).unwrap();
 
     //connect to the remote server
-    let server_address = Address::from_str(&format!("{}@{}", SERVER_NODE, PROCESS)).expect("Invalid address format");
-
-    let _ = connect_to_server(&mut state, &server_address);
+    //let server_address = Address::from_str(&format!("{}@{}", SERVER_NODE, PROCESS)).expect("Invalid address format");
+    //let _ = connect_to_server(&mut state, &server_address);
 
     kinode_process_lib::timer::set_timer(10_000, None); //TODO: remove this kind of functionality
 
@@ -60,35 +56,6 @@ fn init(our: Address) {
     }
 }
 
-fn connect_to_server(state: &mut State, server: &Address) -> anyhow::Result<()> {
-    if let Some(old_server) = &mut state.client.server {
-        if *old_server != *server {
-            poke_server(state, ServerRequest::Unsubscribe)?;
-            set_server(state, server)?;
-        } 
-    } else {
-        set_server(state, server)?;
-    }
-
-    let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerRequest(ServerRequest::Subscribe)).unwrap();
-    Request::new()
-        .target(server)
-        .body(send_body)
-        .send()
-        .unwrap();
-
-    Ok(())
-}
-
-fn set_server(state: &mut State, new_server: &Address) -> anyhow::Result<()> {
-    state.client = ClientState {
-        server: Some(new_server.clone()),
-        chat_state: Vec::new(),
-        ws_channels: state.client.ws_channels.clone(),
-    };
-    Ok(())
-}
-
 fn handle_message(
     our: &Address, 
     state: &mut State, 
@@ -98,18 +65,22 @@ fn handle_message(
         let pid_str =  message.source().process.to_string();
         match pid_str.as_str() {  
             "timer:distro:sys" => handle_timer_events(our, state),
-            "http_server:distro:sys" => handle_http_server_request(our, state, &message), // extract stuff form this handler to the match statement below
+            "http_server:distro:sys" => handle_http_server_request(our, state, &message), 
             _ => return Ok(())
         };
     } else {
+        //handle_alien_message here
+        //handle_
+
         match serde_json::from_slice(&message.body())? {
-            TerryPacket::ServerRequest(sreq) => { 
-                if our.node != SERVER_NODE {
-                    return Ok(());
-                }
-                handle_server_request(message.source(), state, sreq)?; 
-            }
-            TerryPacket::ServerUpdate(supt) => { handle_server_update(message.source().clone(), state, supt)?; }
+            //TerryPacket::ServerRequest(sreq) => { 
+            //    if our.node != SERVER_NODE {
+            //        return Ok(());
+            //    }
+            //    Ok(())
+            //    //handle_server_request(message.source(), state, sreq)?; 
+            //}
+            //TerryPacket::ServerUpdate(supt) => { handle_server_update(message.source().clone(), state, supt)?; }
             TerryPacket::ClientRequest(creq) => { handle_client_request(state, creq)?; }
             TerryPacket::PeerRequest(preq) => { handle_peer_message(our, &message.source().node, state, preq)?; }
             _ => return Ok(()) //??
@@ -118,79 +89,6 @@ fn handle_message(
     Ok(())
 }
 
-// dont touch for now
-fn handle_server_request(
-    source: &Address,
-    state: &mut State, 
-    req: ServerRequest
-) -> anyhow::Result<()> {
-    match req {
-        ServerRequest::ChatMessage(chat_message) => {
-            let chat_message = ChatMessage {
-                sender: source.node.clone(),
-                content: chat_message.content, //??
-                timestamp: std::time::SystemTime::now(),
-            };
-            send_server_update(state, ServerUpdate::ChatMessage(chat_message.clone()));
-        }
-        ServerRequest::Subscribe => {
-            state.server.subscribers.insert(source.clone());
-            let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerUpdate(ServerUpdate::SubscribeAck)).unwrap();
-            Request::new()
-                .target(source.clone()) 
-                .body(send_body)
-                .send()
-                .unwrap();
-            let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerUpdate(ServerUpdate::ChatState(state.server.chat_state.clone()))).unwrap();
-            Request::new()
-                .target(source.clone()) 
-                .body(send_body)
-                .send()
-                .unwrap();
-        }
-        ServerRequest::Unsubscribe => { 
-            if let _ = state.server.subscribers.remove(&source)  {
-                return Ok(())
-            } else {
-                return Ok(()) //?? no
-            }
-        } //TODO: maybe some client teardown is needed?
-    } 
-    Ok(())
-}
-
-fn handle_server_update (
-    source: Address,
-    state: &mut State, 
-    supt: ServerUpdate
-) -> anyhow::Result<()> {
-    if let Some(server) = &mut state.client.server {
-        if source != *server {
-            return Ok(()) //??
-        }
-        match supt {
-            ServerUpdate::ChatMessage(chat_message) => {ws_broadcast(state, WsUpdate::NewChatMessage(chat_message)).unwrap(); }
-            ServerUpdate::ChatState(chat_history) => {ws_broadcast(state, WsUpdate::ChatHistory(chat_history)).unwrap(); }
-            ServerUpdate::SubscribeAck => {return Ok(());}
-        }
-        Ok(())
-    } else {
-        return Ok(()) //??
-    }
-}
-
-fn send_server_update(state: &mut State, update: ServerUpdate) -> anyhow::Result<()> {
-    let update_body = TerryPacket::ServerUpdate(update);
-    let send_body : Vec<u8> = serde_json::to_vec(&update_body).unwrap();
-    for sub in state.server.subscribers.iter() {
-        Request::new()
-            .target(sub)
-            .body(send_body.clone())
-            .send()
-            .unwrap();
-    }
-    Ok(())
-}
 
 // the timing needs to be more sophisicated 
 fn handle_timer_events(our: &Address, state: &mut State) -> anyhow::Result<()>{
@@ -218,56 +116,17 @@ fn handle_http_server_request(
                 ws_broadcast(&state, WsUpdate::ChatHistory(state.client.chat_state.clone())).unwrap();//newly connected clients get to see the chat history
             }
             HttpServerRequest::WebSocketPush { .. } => {
-                let Some(blob) = get_blob() else { return Ok(());};
-                let Ok(blob_string) = String::from_utf8(blob.bytes) else { return Ok(());};
-                let chat_message: ChatMessageBody = serde_json::from_str(&blob_string)?;
-                let chat_message = ChatMessage {
-                    sender: state.node_id.clone(),
-                    content: chat_message.content.clone(),
-                    timestamp: std::time::SystemTime::now(),
-                };
-                state.add_chat_message(chat_message.clone());
-                ws_broadcast(state, WsUpdate::NewChatMessage(chat_message)).unwrap();
+                //let Some(blob) = get_blob() else { return Ok(());};
+                //ws_broadcast(state, WsUpdate::something
+                Ok(())
             },
             HttpServerRequest::WebSocketClose(channel_id) =>  { state.client.ws_channels.remove(&channel_id); },
-
-            HttpServerRequest::Http(request) => { //move to own handler
+            HttpServerRequest::Http(request) => { 
                 let bound_path = request.bound_path(Some(&our.process())).rsplit('/').next().unwrap_or("");
 
                 match request.method()? {
                     http::Method::GET => handle_get_request(bound_path, state),
-                    //http::Method::POST => handle_post_request(bound_path, state, &request),
-                    http::Method::POST => { 
-
-                        println!("1. bound_path of http POST request: {:?}", bound_path);
-
-                        let Some(blob) = get_blob() else { return Ok(())};
-                        let Ok(post_string) = String::from_utf8(blob.bytes) else {return Ok(())};
-
-                        println!("2. Http > POST > (post_string): {:?}", &post_string);
-
-                        match serde_json::from_str(&post_string)? {
-                            ClientRequest::SendToServer(req) => {
-                                println!("3. Http > POST > post_string > serde_json {:?}", req);
-
-                                handle_client_request(state, ClientRequest::SendToServer(req))?;
-                                
-                                Ok(())
-
-                                //let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ClientRequest(req)).unwrap();
-                                //Request::new()
-                                //    .target(our)
-                                //    .body(send_body)
-                                //    .send()
-                                //    .unwrap();
-                                //Ok(())
-                            }
-                            _ => { 
-                                println!("catch-rest clause");
-                                Ok(()) 
-                            }
-                        }
-                    }
+                    http::Method::POST => handle_post_request(bound_path, state, &request),
                     _ => return Err(anyhow::anyhow!("blabla"))
                 };
             },
@@ -279,19 +138,27 @@ fn handle_http_server_request(
     }
 }
 
-// How did this even work before?
+// Used to return Some((http::StatusCode::OK, headers, body))
 fn handle_get_request(bound_path: &str, state: &State) -> anyhow::Result<()> {
-    println!("get request handler");
+    println!("Handling GET request for path: {:?}", bound_path);
     match bound_path {
         "get_leaderboard" => {
             //println!("get_leaderboard matched");
-            let mut headers = HashMap::new();
-            headers.insert("Content-Type".to_string(), "application/json".to_string());
+            let headers = HashMap::from([("Content-Type".to_string(), "application/json".to_string())]);
             let body = serde_json::to_vec(state)?;
+            println!("state lol: {:?} ", state);
+            send_http_response((http::StatusCode::OK, headers, body));
             Ok(())
         },
-        _ => Ok(())
+        _ => Err(anyhow::anyhow!("Unsupported GET path: {}", bound_path))
     }
+}
+
+fn send_http_response(response: (http::StatusCode, HashMap<String, String>, Vec<u8>)) {
+    let (status, headers, body) = response;
+    println!("body in send http resp: {:?}", body);
+    http::send_response(status, Some(headers), body);
+    println!("Response sent with status: {:?}", status);
 }
 
 // these are all done through the frontend ui
@@ -302,52 +169,46 @@ fn handle_post_request(bound_path: &str, state: &mut State, http_request: &http:
             state.add_respect();
             Ok(())
         },
-        "send_contact_request" => handle_send_contact_request(state, http_request), 
         "set_discoverable" => {
             state.set_discoverable(!state.discoverable);
             Ok(())
         },
+        "send_contact_request" => handle_send_contact_request(state, http_request), 
         "accept_contact" => handle_accept_contact(state, http_request),
         "decline_contact" => handle_decline_contact(state, http_request),
-        "send_chat_message" => handle_send_chat_message(state, http_request),
+        //"send_chat_message" => handle_send_chat_message(state, http_request),
         _ => return Err(anyhow::anyhow!("bound path not valid: {:?}", bound_path))
     }
 }
 
-
-fn send_http_response(response: (http::StatusCode, HashMap<String, String>, Vec<u8>)) {
-    let (status, headers, body) = response;
-    http::send_response(status, Some(headers), body);
-    println!("Response sent: {:?}", status);
-}
 
 fn handle_client_request(
     state: &mut State,
     creq: ClientRequest,
 ) -> anyhow::Result<()> {
     match creq {
-        ClientRequest::SendToServer(sreq) => {
-            match sreq.clone() {
-                ServerRequest::ChatMessage(chat_message) => { 
-                    let wrapped_chat_message = ServerRequest::ChatMessage(chat_message.clone());
-                    poke_server(state, wrapped_chat_message)?;
-                }, 
-                _ => { poke_server(state, sreq)? } // sub, unsub or something that wont be matched
-                //ServerRequest::Subscribe => { connect_to_server(state) },
-                //ServerRequest::Unsubscribe => { connect_to_server(state) },
-            }
-        },
-        ClientRequest::ToggleServer(server) => {
-            if let Some(address) = server { 
-                connect_to_server(state, &address)?;
-            } else { // the client wants to disconnect
-                poke_server(state, ServerRequest::Unsubscribe);
+        //ClientRequest::SendToServer(sreq) => {
+        //    match sreq.clone() {
+        //        //ServerRequest::ChatMessage(chat_message) => { 
+        //        //    let wrapped_chat_message = ServerRequest::ChatMessage(chat_message.clone());
+        //        //    poke_server(state, wrapped_chat_message)?;
+        //        //}, 
+        //        _ => { poke_server(state, sreq)? } // sub, unsub or something that wont be matched
+        //        //ServerRequest::Subscribe => { connect_to_server(state) },
+        //        //ServerRequest::Unsubscribe => { connect_to_server(state) },
+        //    }
+        //},
+        //ClientRequest::ToggleServer(server) => {
+        //    if let Some(address) = server { 
+        //        connect_to_server(state, &address)?;
+        //    } else { // the client wants to disconnect
+        //        poke_server(state, ServerRequest::Unsubscribe);
 
-                //perhaps also let other ws clients know that this client is bailing?
-                
-                state.client.server = None;
-            }
-        }, 
+        //        //perhaps also let other ws clients know that this client is bailing?
+        //        
+        //        state.client.server = None;
+        //    }
+        //}, 
         ClientRequest::SendToPeer(pmes) => { // TODO:
             println!("got a peer message");
             //RequestPeer(NodeId),
@@ -373,19 +234,6 @@ fn poke_peer(state: &State, req: PeerRequest, peer: Address) -> anyhow::Result<(
     }
 }
 
-fn poke_server(state: &State, req: ServerRequest) -> anyhow::Result<()> {
-    if let Some(server) = &state.client.server {
-        let request_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerRequest(req)).unwrap();
-        Request::new()
-            .target(server)
-            .body(request_body)
-            .send()
-            .unwrap();
-        Ok(()) //
-    } else {
-        Ok(()) //
-    }
-}
 
 // strictly p2p
 fn handle_peer_message(
@@ -503,50 +351,6 @@ fn handle_decline_contact(state: &mut State, http_request: &http::IncomingHttpRe
         }
     }
 }
-
-//TODO: This should get replaced by the server message handling
-fn handle_send_chat_message(state: &mut State, http_request: &http::IncomingHttpRequest)-> anyhow::Result<()> {
-    let body = get_blob().ok_or(anyhow::anyhow!("couldn't get body from blob"))?;
-    let body_str = std::str::from_utf8(&body.bytes).unwrap_or_default();
-    //println!("body_str: {:?}", body_str);
-    let mut headers = HashMap::new();
-    headers.insert("Content-Type".to_string(), "application/json".to_string());
-
-    match serde_json::from_str::<ChatMessageBody>(body_str) {
-        Ok(parsed_body) => {
-            let chat_message = ChatMessage {
-                sender: state.node_id.clone(),
-                content: parsed_body.content.clone(),
-                timestamp: std::time::SystemTime::now(), 
-            };
-            state.add_chat_message(chat_message.clone());
-
-            let chat_message = ChatRequest::ChatMessageReceived(chat_message.clone());
-
-            match serde_json::to_vec(&chat_message) {
-                Ok(serialized_message) => {
-                    for contact in &state.contacts {
-                        let their_addy = Address {
-                            node: contact.clone(),
-                            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").unwrap(),
-                        };
-                        Request::new()
-                            .body(serialized_message.clone())
-                            .target(&their_addy)
-                            .send()
-                            .unwrap();
-                    }
-                }
-                Err(_e) => println!("Failed to serialize chat message: {:?}", chat_message)
-            }
-            Ok(())
-        },
-        _ => {
-            return Err(anyhow::anyhow!("failed to parse the body {:?}", body_str));
-        }
-    }
-}
-
 // pushing your score to your contacts p2p
 fn push_update_to_your_contacts(our: &Address, state: &State) {
     let our_respects = state.stats.get(&state.node_id).unwrap_or(&LeaderboardEntry { respects: 0 });
@@ -555,7 +359,8 @@ fn push_update_to_your_contacts(our: &Address, state: &State) {
     for contact in &state.contacts {
         let their_addy = Address {
             node: contact.clone(),
-            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").unwrap(),
+            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").ok().unwrap(),  
+            //process: PROCESS,
         };
         Request::new()
             .body(serde_json::to_vec(&our_respect_update).unwrap())
@@ -599,52 +404,228 @@ fn resend_pending_requests(state: &mut State) {
     state.pending_contact_requests.retain(|pending| !nodes_to_remove.contains(pending));
 }
 
-//fn handle_websocket_event(
-//    our: Address, 
-//    state: &mut State, 
-//    message: &Message
-//) -> anyhow::Result<()> {
-//    let Ok(server_request) = serde_json::from_slice::<HttpServerRequest>(message.body()) else {
-//        return Err(anyhow::anyhow!("couldn't get the server request: {:?}", message));
-//    };
+// Function to broadcast a message to all connected WebSocket clients
+fn ws_broadcast(state: &State, update: WsUpdate) -> anyhow::Result<()> {
+    let message = serde_json::to_string(&update)?;
+    for channel_id in &state.client.ws_channels {
+        let action = HttpServerAction::WebSocketPush {
+            channel_id: *channel_id,
+            message_type: WsMessageType::Text,
+        };
+        let blob = LazyLoadBlob {
+            mime: Some("application/json".to_string()),
+            bytes: message.as_bytes().to_vec(),
+        };
+        send_ws_push(*channel_id, WsMessageType::Text, blob).unwrap();
+    }
+    Ok(())
+}
+
+
+//TODO: This should get replaced by the server message handling
+//fn handle_send_chat_message(state: &mut State, http_request: &http::IncomingHttpRequest)-> anyhow::Result<()> {
+//    let body = get_blob().ok_or(anyhow::anyhow!("couldn't get body from blob"))?;
+//    let body_str = std::str::from_utf8(&body.bytes).unwrap_or_default();
+//    //println!("body_str: {:?}", body_str);
+//    let mut headers = HashMap::new();
+//    headers.insert("Content-Type".to_string(), "application/json".to_string());
 //
-//    match server_request {
-//        HttpServerRequest::WebSocketOpen { channel_id, ..} => { 
-//            state.ws_channels.insert(channel_id); 
-//            ws_broadcast(&state, WsUpdate::ChatHistory(state.chat_history.clone())).unwrap();//newly connected clients get to see the chat history
-//        },
-//        HttpServerRequest::WebSocketPush { .. } => {
-//            let Some(blob) = get_blob() else { return Ok(());};
-//            let Ok(blob_string) = String::from_utf8(blob.bytes) else { return Ok(());};
-//            let chat_message: ChatMessageBody = serde_json::from_str(&blob_string)?;
+//    match serde_json::from_str::<ChatMessageBody>(body_str) {
+//        Ok(parsed_body) => {
 //            let chat_message = ChatMessage {
 //                sender: state.node_id.clone(),
-//                content: chat_message.content.clone(),
-//                timestamp: std::time::SystemTime::now(),
+//                content: parsed_body.content.clone(),
+//                timestamp: std::time::SystemTime::now(), 
 //            };
 //            state.add_chat_message(chat_message.clone());
-//            ws_broadcast(state, WsUpdate::NewChatMessage(chat_message)).unwrap();
+//
+//            let chat_message = ChatRequest::ChatMessageReceived(chat_message.clone());
+//
+//            match serde_json::to_vec(&chat_message) {
+//                Ok(serialized_message) => {
+//                    for contact in &state.contacts {
+//                        let their_addy = Address {
+//                            node: contact.clone(),
+//                            process: ProcessId::from_str("updated_shrine:td_shrine:sharmouta.os").unwrap(),
+//                        };
+//                        Request::new()
+//                            .body(serialized_message.clone())
+//                            .target(&their_addy)
+//                            .send()
+//                            .unwrap();
+//                    }
+//                }
+//                Err(_e) => println!("Failed to serialize chat message: {:?}", chat_message)
+//            }
+//            Ok(())
 //        },
-//        HttpServerRequest::WebSocketClose(channel_id) =>  { state.ws_channels.remove(&channel_id); },
-//        _ => {}
+//        _ => {
+//            return Err(anyhow::anyhow!("failed to parse the body {:?}", body_str));
+//        }
+//    }
+//}
+//fn ws_broadcast(state: &State, update: WsUpdate) -> anyhow::Result<()> {
+//    let blob = LazyLoadBlob {
+//        mime: Some("application/json".to_string()),
+//        bytes: serde_json::json!({
+//            "WsUpdate": update
+//        })
+//        .to_string()
+//        .as_bytes()
+//        .to_vec(),
 //    };
+//
+//    for channel in &state.client.ws_channels {
+//        send_ws_push(*channel, WsMessageType::Text, blob.clone());
+//    }
+//    Ok(())
+//}
+//fn poke_server(state: &State, req: ServerRequest) -> anyhow::Result<()> {
+//    if let Some(server) = &state.client.server {
+//        let request_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerRequest(req)).unwrap();
+//        Request::new()
+//            .target(server)
+//            .body(request_body)
+//            .send()
+//            .unwrap();
+//        Ok(()) //
+//    } else {
+//        Ok(()) //
+//    }
+//}
+// dont touch for now
+//fn handle_server_request(
+//    source: &Address,
+//    state: &mut State, 
+//    req: ServerRequest
+//) -> anyhow::Result<()> {
+//    match req {
+//        //ServerRequest::ChatMessage(chat_message) => {
+//        //    let chat_message = ChatMessage {
+//        //        sender: source.node.clone(),
+//        //        content: chat_message.content, //??
+//        //        timestamp: std::time::SystemTime::now(),
+//        //    };
+//        //    send_server_update(state, ServerUpdate::ChatMessage(chat_message.clone()));
+//        //}
+//        ServerRequest::Subscribe => {
+//            state.server.subscribers.insert(source.clone());
+//            let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerUpdate(ServerUpdate::SubscribeAck)).unwrap();
+//            Request::new()
+//                .target(source.clone()) 
+//                .body(send_body)
+//                .send()
+//                .unwrap();
+//            let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerUpdate(ServerUpdate::ChatState(state.server.chat_state.clone()))).unwrap();
+//            Request::new()
+//                .target(source.clone()) 
+//                .body(send_body)
+//                .send()
+//                .unwrap();
+//        }
+//        ServerRequest::Unsubscribe => { 
+//            if let _ = state.server.subscribers.remove(&source)  {
+//                return Ok(())
+//            } else {
+//                return Ok(()) //?? no
+//            }
+//        } //TODO: maybe some client teardown is needed?
+//    } 
+//    Ok(())
+//}
+
+//fn handle_server_update (
+//    source: Address,
+//    state: &mut State, 
+//    supt: ServerUpdate
+//) -> anyhow::Result<()> {
+//    if let Some(server) = &mut state.client.server {
+//        if source != *server {
+//            return Ok(()) //??
+//        }
+//        match supt {
+//            //ServerUpdate::ChatMessage(chat_message) => {ws_broadcast(state, WsUpdate::NewChatMessage(chat_message)).unwrap(); }
+//            //ServerUpdate::ChatState(chat_history) => {ws_broadcast(state, WsUpdate::ChatHistory(chat_history)).unwrap(); }
+//            ServerUpdate::SubscribeAck => {return Ok(());}
+//        }
+//        Ok(())
+//    } else {
+//        return Ok(()) //??
+//    }
+//}
+//
+//fn send_server_update(state: &mut State, update: ServerUpdate) -> anyhow::Result<()> {
+//    let update_body = TerryPacket::ServerUpdate(update);
+//    let send_body : Vec<u8> = serde_json::to_vec(&update_body).unwrap();
+//    for sub in state.server.subscribers.iter() {
+//        Request::new()
+//            .target(sub)
+//            .body(send_body.clone())
+//            .send()
+//            .unwrap();
+//    }
+//    Ok(())
+//}
+//fn connect_to_server(state: &mut State, server: &Address) -> anyhow::Result<()> {
+//    if let Some(old_server) = &mut state.client.server {
+//        if *old_server != *server {
+//            poke_server(state, ServerRequest::Unsubscribe)?;
+//            set_server(state, server)?;
+//        } 
+//    } else {
+//        set_server(state, server)?;
+//    }
+//
+//    let send_body : Vec<u8> = serde_json::to_vec(&TerryPacket::ServerRequest(ServerRequest::Subscribe)).unwrap();
+//    Request::new()
+//        .target(server)
+//        .body(send_body)
+//        .send()
+//        .unwrap();
 //
 //    Ok(())
 //}
 
-fn ws_broadcast(state: &State, update: WsUpdate) -> anyhow::Result<()> {
-    let blob = LazyLoadBlob {
-        mime: Some("application/json".to_string()),
-        bytes: serde_json::json!({
-            "WsUpdate": update
-        })
-        .to_string()
-        .as_bytes()
-        .to_vec(),
-    };
+//fn set_server(state: &mut State, new_server: &Address) -> anyhow::Result<()> {
+//    state.client = ClientState {
+//        server: Some(new_server.clone()),
+//        chat_state: Vec::new(),
+//        ws_channels: state.client.ws_channels.clone(),
+//    };
+//    Ok(())
+//}
 
-    for channel in &state.client.ws_channels {
-        send_ws_push(*channel, WsMessageType::Text, blob.clone());
-    }
-    Ok(())
-}
+//fn handle_alien_message(our: &Address, state: &mut State, message: &Message) {
+//    if let Ok(alien_request) = serde_json::from_slice::<ContactRequest>(message.body()) {
+//        let their_node = &message.source().node;
+//        //println!("message: {:?}", message);
+//        match alien_request {
+//            ContactRequest::RequestContact(node_id) => {
+//                // append the incoming node_id to the incoming_contact_requests
+//                if !state.contacts.contains(&their_node) && !state.incoming_contact_requests.contains(&their_node) && their_node != &our.node{ // temp solution for now
+//                    state.incoming_contact_requests.push(their_node.clone());
+//                    println!("contact request from {:?}", &their_node);
+//                }
+//            },
+//            //TODO: remove that node from pending
+//            ContactRequest::ContactAccepted(node_id) => { 
+//                // pressing accept in the UI triggers sender recieves this ACK from the originial receiver
+//                state.contacts.push(their_node.to_string());
+//                println!("{} accepted your request. You are now frens <3", &their_node);
+//            },
+//            ContactRequest::ContactUpdate(entry) => { 
+//                //if they're in our contacts, update their score
+//                if state.contacts.contains(&their_node) {
+//                    state.stats.insert(their_node.to_string(),entry);
+//                    println!("updated {:?}", &their_node);
+//                } else  {
+//                    println!("request from non-contact (delete this later)");
+//                }
+//            },
+//            _ =>  {
+//                println!("contact request didn't match anything");
+//                return
+//            }
+//        }
+//    }
+//}

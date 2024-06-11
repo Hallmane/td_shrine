@@ -12,7 +12,7 @@ pub struct State {
     pub pending_contact_requests: Vec<NodeId>,  
     pub incoming_contact_requests: Vec<NodeId>,
     // chat stuff below
-    pub server: ServerState,
+    //pub server: ServerState,
     pub client: ClientState, 
 }
 
@@ -24,31 +24,31 @@ pub struct ServerState {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ClientState {
-    pub server: Option<Address>,
-    pub chat_state: Vec<ChatMessage>,
+    //pub server: Option<Address>,
+    //pub chat_state: Vec<ChatMessage>,
     pub ws_channels: HashSet<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TerryPacket {
-    ServerRequest(ServerRequest), // client -> сервер
-    ServerUpdate(ServerUpdate), // server -> client/s (updated chat)
+    //ServerRequest(ServerRequest), // client -> сервер
+    //ServerUpdate(ServerUpdate), // server -> client/s (updated chat)
     ClientRequest(ClientRequest), // client -> server (SetServer and SendToServer)
     PeerRequest(PeerRequest), // peer -> peer
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ServerRequest { 
-    ChatMessage(ChatMessage),
-    Subscribe,
-    Unsubscribe,
-}
+//#[derive(Debug, Clone, Serialize, Deserialize)]
+//pub enum ServerRequest { 
+//    //ChatMessage(ChatMessage),
+//    Subscribe,
+//    Unsubscribe,
+//}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientRequest {
-    SendToServer(ServerRequest),
-    ToggleServer(Option<Address>),
+    //SendToServer(ServerRequest),
+    //ToggleServer(Option<Address>),
     SendToPeer(PeerRequest),
 }
 
@@ -59,12 +59,12 @@ pub enum PeerRequest {
     PeerUpdate(LeaderboardEntry),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ServerUpdate {
-    ChatMessage(ChatMessage),
-    ChatState(Vec<ChatMessage>),
-    SubscribeAck,
-}
+//#[derive(Debug, Clone, Serialize, Deserialize)]
+//pub enum ServerUpdate {
+//    ChatMessage(ChatMessage),
+//    ChatState(Vec<ChatMessage>),
+//    SubscribeAck,
+//}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -112,7 +112,7 @@ impl State {
             stats, // HashMap<contact.node, their entry>, or what to use for rendering the frontend
             pending_contact_requests: Vec::new(),
             incoming_contact_requests: Vec::new(),
-            server: ServerState::default(),
+            //server: ServerState::default(),
             client: ClientState::default(),
         }
     }
@@ -176,14 +176,14 @@ impl State {
         //println!("Removed entry for node_id {}: {}", node_id, removed);
     }
 
-    pub fn add_chat_message(&mut self, chat_message: ChatMessage) {
-        if self.server.chat_state.len() >= 50 {
-            self.server.chat_state.remove(0);
-            self.client.chat_state.remove(0);
-        }
-        self.server.chat_state.push(chat_message.clone());
-        self.client.chat_state.push(chat_message.clone());
-    }
+    //pub fn add_chat_message(&mut self, chat_message: ChatMessage) {
+    //    if self.server.chat_state.len() >= 50 {
+    //        self.server.chat_state.remove(0);
+    //        self.client.chat_state.remove(0);
+    //    }
+    //    self.server.chat_state.push(chat_message.clone());
+    //    self.client.chat_state.push(chat_message.clone());
+    //}
 }
 
     //// crdt merge op

@@ -5,7 +5,7 @@ import './styles.css';
 export const Leaderboard = () => {
 
     const { leaderboard, updateLeaderboard} = useShrineStore(state => ({
-        leaderboard: state,
+        leaderboard: state.leaderboard,
         discoverable: state.leaderboard.discoverable,
         updateLeaderboard: state.updateLeaderboard,
     }));
@@ -23,7 +23,7 @@ export const Leaderboard = () => {
                 <span > Node </span> <span > Respects </span>
             </li>
             <ul>
-                {Object.entries(leaderboard.leaderboard.stats).sort((a, b) => b[1].respects - a[1].respects).map(([nodeId, entry]) => (
+                {Object.entries(leaderboard.stats).sort((a, b) => b[1].respects - a[1].respects).map(([nodeId, entry]) => (
                     <li className='leaderboard-entry' key={nodeId}>
                         <span>{nodeId} </span> <span>{entry.respects} </span>
                     </li>
